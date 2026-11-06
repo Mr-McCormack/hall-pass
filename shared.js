@@ -11,7 +11,8 @@ import { activeClass, noPassWindows, dateKey, decide, passStatus, fmtElapsed } f
 export const configured = !String(firebaseConfig.apiKey || '').includes('PASTE');
 const app = configured ? F.initializeApp(firebaseConfig) : null;
 export const auth = app ? F.getAuth(app) : null;
-export const db = app ? F.getFirestore(app) : null;
+// Long polling works through school web filters that break Firebase's normal streaming connection.
+export const db = app ? F.initializeFirestore(app, { experimentalForceLongPolling: true }) : null;
 
 export const { onAuthStateChanged, onSnapshot, getDoc, getDocs, query, orderBy, limit } = F;
 export const signOutNow = () => F.signOut(auth);
@@ -383,13 +384,11 @@ export function startProcessor(uid, getT, code) {
 }
 
 // ---------- student devices: send a request and wait for the teacher's screen to answer ----------
-export async function sendRequest(code, payload, timeoutMs = 12000) {
+export async function sendRequest(code, payload, timeoutMs = 25000) {
   const ref = F.doc(reqCol(code));
   const body = { action: payload.action, device: deviceId(), at: F.serverTimestamp() };
   if (payload.pin != null) body.pin = String(payload.pin);
   if (payload.token != null) body.token = String(payload.token);
-  try { await F.setDoc(ref, body); }
-  catch (e) { return { ok: false, msg: "Couldn't reach Hall Pass. Check your internet." }; }
   return new Promise(resolve => {
     let done = false, unsub = null, timer = null;
     const finish = r => { if (done) return; done = true; clearTimeout(timer); if (unsub) unsub(); resolve(r); };
@@ -402,5 +401,8 @@ export async function sendRequest(code, payload, timeoutMs = 12000) {
     if (done) unsub();
     timer = setTimeout(() => finish({ ok: false, offline: true,
       msg: "Your teacher's screen isn't answering. Ask your teacher to open Hall Pass." }), timeoutMs);
+    // Don't wait for the send to finish first: on a shaky connection it can stall, and the timer below
+    // still needs to run so the student isn't stuck on "Checking…".
+    F.setDoc(ref, body).catch(() => finish({ ok: false, msg: "Couldn't reach Hall Pass. Check your internet and try again." }));
   });
 }

@@ -11,7 +11,7 @@ export function mountDashboard(view, ctx) {
   let tab = lsGet('hp-tab') || 'live';
   let selClass = null, pendingRender = false;
   let log = null, logLoading = false, logDay = dateKey(), logClass = '';
-  let idleTimer = null;
+  let idleTimer = null, manualPickId = '';
 
   const T = () => S.T;
   const uid = () => S.uid;
@@ -36,6 +36,7 @@ export function mountDashboard(view, ctx) {
         <button data-tab="settings">Settings</button>
       </nav>
       <div class="grow"></div>
+      <span class="conn" data-conn></span>
       <button class="btn primary" data-top="float">⧉ Floating window</button>
       <button class="btn" data-top="lock">🔒 Lock</button>
     </header>
@@ -58,7 +59,7 @@ export function mountDashboard(view, ctx) {
     if (!T()) return;
     view.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
     const a = document.activeElement;
-    if (!force && a && panel.contains(a) && a.matches('input, select, textarea')) { pendingRender = true; return; }
+    if (!force && a && panel.contains(a) && a.matches('textarea, input:not([type=checkbox]):not([type=radio]):not([type=file])')) { pendingRender = true; return; }
     pendingRender = false;
     $('#bk').innerHTML = lsGet('hp-backup-at') ? '' : `<div class="backup-banner">
       <span><b>Download your backup file.</b> It's the only way back into your dashboard if this browser's data gets cleared or you switch computers.</span>
@@ -113,7 +114,7 @@ export function mountDashboard(view, ctx) {
         <div class="card">
           <h2>Students without a computer</h2>
           ${roster.length ? `<p class="muted">They can type their PIN on any computer, including this one after you lock it. Or do it for them:</p>
-            <div class="row"><select id="manualPick">${roster.map(x => `<option value="${x.id}">${esc(x.name)}</option>`).join('')}</select>
+            <div class="row"><select id="manualPick">${roster.map(x => `<option value="${x.id}" ${x.id === manualPickId ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</select>
             <button class="btn" data-action="mLine">Add to line</button>
             <button class="btn" data-action="mGo">Send now</button></div>
             <p class="muted small">"Send now" skips the line and no-pass times.</p>`
@@ -461,11 +462,12 @@ export function mountDashboard(view, ctx) {
   };
 
   view.onchange = async e => {
+    if (e.target.id === 'manualPick') manualPickId = e.target.value;
     const el = e.target, kind = el.dataset.change;
     if (!kind) return;
     const p = el.dataset.id ? T().periods.find(x => x.id === el.dataset.id) : null;
     switch (kind) {
-      case 'override': await save({ 'settings.override': el.value }, true); break;
+      case 'override': await save({ 'settings.override': el.value }, true); el.blur(); break;
       case 'className': { const c = findClass(selClass); if (el.value.trim()) { c.name = el.value.trim(); await saveClasses(); } break; }
       case 'stuName': { const s = findStu(el.dataset.id); if (s && el.value.trim()) { s.name = el.value.trim(); await saveClasses(); } break; }
       case 'p': {

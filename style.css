@@ -201,3 +201,8 @@ main.narrow:has(.card.me.is-up) > .status { display: none; }
 .backup-banner span { flex: 1 1 320px; }
 @media (max-width: 1132px) { .backup-banner { margin: 1rem 16px 0; } }
 hr.sep { border: 0; border-top: 1px solid var(--line); margin: 1.25rem 0; }
+
+.conn { font-size: .8rem; color: var(--muted); display: inline-flex; align-items: center; gap: .35rem; white-space: nowrap; }
+.conn::before { content: ""; width: .55rem; height: .55rem; border-radius: 50%; background: var(--ok); }
+.conn.off { color: var(--warn); font-weight: 600; }
+.conn.off::before { background: var(--warn); }

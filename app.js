@@ -40,7 +40,7 @@ const roomTitle = () => {
 if (!configured) setupNotice(view);
 else {
   onAuthStateChanged(auth, onAuth);
-  setInterval(() => { tickTimers(S.room); screen?.tick?.(); floatTick(ctx); }, 1000);
+  setInterval(() => { tickTimers(S.room); screen?.tick?.(); floatTick(ctx); drawConn(); }, 1000);
   setInterval(() => { if (S.mode === 'teacher' && S.T) syncRoom(S.uid, S.T).catch(() => {}); }, 20000);
 }
 
@@ -84,30 +84,71 @@ function useRoom(code) {
   watchRoom(code);
 }
 
+// Connection status, shown as a small dot on every screen.
+let offlineSince = Date.now();
+function setOnline(on) {
+  if (on) offlineSince = 0;
+  else if (!offlineSince) offlineSince = Date.now();
+}
+function drawConn() {
+  const bad = offlineSince && Date.now() - offlineSince > 4000;
+  document.querySelectorAll('[data-conn]').forEach(el => {
+    el.className = 'conn ' + (bad ? 'off' : 'on');
+    el.textContent = bad ? 'Reconnecting…' : 'Connected';
+  });
+}
+
 function watchRoom(code) {
   roomUnsub?.();
   S.room = null;
-  let first = true;
-  const bad = () => {
-    if (S.mode !== 'student') return;
-    lsSet('hp-room', null);
-    showCode("That room code didn't work. Check with your teacher.");
-  };
-  roomUnsub = onSnapshot(roomRef(code), s => {
+  let first = true, lastJson;
+  setOnline(false);
+  if (S.mode === 'student') showConnecting();
+  roomUnsub = onSnapshot(roomRef(code), { includeMetadataChanges: true }, s => {
+    setOnline(!s.metadata.fromCache);
+    // Not connected yet: "no such room" from the browser's cache doesn't mean the code is wrong.
+    if (!s.exists() && s.metadata.fromCache) return;
+    const json = s.exists() ? JSON.stringify(s.data()) : null;
+    if (!first && json === lastJson) return; // only the connection status changed
+    lastJson = json;
     S.room = s.exists() ? s.data() : null;
     if (S.mode === 'student') {
-      if (!s.exists()) return bad();
+      if (!s.exists()) {
+        lsSet('hp-room', null);
+        return showCode("That room code didn't work. Check with your teacher.");
+      }
       if (first) {
+        first = false;
         lsSet('hp-room', code);
         if (new URLSearchParams(location.search).get('room') !== code) history.replaceState(null, '', '?room=' + code);
-        first = false;
         return S.session ? showStudent() : showPad();
       }
     }
     first = false;
     screen?.update?.();
     floatUpdate(ctx);
-  }, bad);
+  }, err => {
+    console.warn('room', err);
+    setOnline(false);
+    // try again in a few seconds instead of giving up on the code
+    setTimeout(() => { if (S.code === code) watchRoom(code); }, 5000);
+  });
+}
+
+function showConnecting() {
+  setScreen({});
+  view.innerHTML = `<div class="card center-card">
+    <div class="brand big-brand">Hall Pass</div>
+    <h1>Connecting…</h1>
+    <p class="muted">This can take a few seconds on the school network.</p>
+    <p class="muted small" id="slow" hidden>Still trying. If this doesn't go away, reload the page.</p>
+    <p class="muted small">Room ${esc(S.code)} · <a href="#" data-a="changeRoom">Change room</a></p>
+  </div>`;
+  const t = setTimeout(() => { const el = $('#slow'); if (el) el.hidden = false; }, 12000);
+  screen.destroy = () => clearTimeout(t);
+  view.onclick = e => {
+    if (e.target.closest('[data-a="changeRoom"]')) { e.preventDefault(); roomUnsub?.(); lsSet('hp-room', null); history.replaceState(null, '', location.pathname); showCode(); }
+  };
 }
 
 // Student devices send requests; your computer answers them itself.
@@ -193,6 +234,7 @@ function showPad(note = '') {
     <div class="status" data-status></div>
     <p class="big" id="cls"></p>
     <div class="card padcard" id="padbox"><h1>Type your PIN</h1>${padHTML}</div>
+    <p><span class="conn" data-conn></span></p>
     <p class="muted small">${isT
       ? 'Students can type their PIN here too.'
       : `Room ${esc(S.code)} · <a href="#" data-a="changeRoom">Change room</a>`}</p>
@@ -372,7 +414,7 @@ function showStudent() {
   });
   view.innerHTML = `<header class="top">
       <div class="brand">Hall Pass</div><div class="grow"></div>
-      <span class="muted" id="cls"></span>
+      <span class="muted" id="cls"></span><span class="conn" data-conn></span>
       <button class="btn sm" data-a="logout">${local ? 'Done' : 'Log out'}</button>
     </header>
     <main class="narrow">
