@@ -7,7 +7,7 @@ import {
   ensureTeacher, syncRoom, startProcessor, handleRequest, sendRequest, hashPin, matchStudentPin, saveTeacher,
   signOutNow, esc, toast, setupNotice, tickTimers, lsGet, lsSet, ssGet, ssSet
 } from './shared.js';
-import { passStatus, decide, upList } from './logic.js';
+import { passStatus, decide, upList, usedUp, usedUpMsg } from './logic.js';
 import { mountDashboard } from './teacher.js';
 import { openFloat, floatUpdate, floatTick, floatIsOpen, closeFloat } from './float.js';
 
@@ -250,7 +250,7 @@ function showPad(note = '') {
       if (isT) { ssSet('hp-unlocked', '1'); showDashboard(); } else showTeacherSetup(true);
       return;
     }
-    S.session = { token: r.token, sid: r.sid, name: r.name };
+    S.session = { token: r.token, sid: r.sid, name: r.name, usage: r.usage || [] };
     if (!isT) lsSet('hp-sess-' + S.code, JSON.stringify(S.session));
     showStudent();
   }, note);
@@ -387,6 +387,8 @@ function showStudent() {
       html = `<p class="up-banner">${name}, you're up!</p><p class="muted">Tap the button as you leave the room.</p>
         <div class="row center"><button class="btn primary xl" data-a="go">I'm leaving now</button></div>
         <button class="btn ghost sm" data-a="leave">Leave the line</button>`;
+    } else if (pos < 0 && usedUp(S.session.usage) && st.state !== 'closed') {
+      html = `<p class="big">No passes left</p><p class="muted">${esc(usedUpMsg(usedUp(S.session.usage)))}</p>`;
     } else if (pos >= 0) {
       html = `<p class="big">You're #${pos + 1} in line</p>
         <p class="muted">${esc(d.reason || st.label)}. This page will tell you when it's your turn.</p>
@@ -399,6 +401,10 @@ function showStudent() {
     } else {
       html = `<p class="big">Need to go?</p><p class="muted">${esc(d.reason || st.label)}. You can still get in line.</p>
         <button class="btn primary xl" data-a="join">Get in line</button>`;
+    }
+    const usage = S.session.usage || [];
+    if (usage.length && !isOut) {
+      html += `<p class="passes-left">Passes left: ${usage.map(u => `<b class="${u.left ? '' : 'danger-text'}">${u.left}</b> ${esc(u.label)}`).join(' · ')}</p>`;
     }
     const meEl = $('#me');
     meEl.innerHTML = html;
@@ -441,6 +447,10 @@ function showStudent() {
       if (!local) lsSet('hp-sess-' + S.code, null);
       S.session = null;
       return showPad(r.msg);
+    }
+    if (r.usage && S.session) {
+      S.session.usage = r.usage;
+      if (!local) lsSet('hp-sess-' + S.code, JSON.stringify(S.session));
     }
     toast(r.msg, !r.ok);
     draw();

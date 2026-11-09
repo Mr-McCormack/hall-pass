@@ -145,3 +145,40 @@ export function decide(room, studentId, d = new Date()) {
   if (free <= 0) return { action: 'line', reason: 'Someone is out right now' };
   return { action: 'line', reason: `${line[0].name} is ahead of you` };
 }
+
+// ---------- pass limits ----------
+// Weeks start on Monday.
+export function weekStart(d = new Date()) {
+  const x = new Date(d); x.setHours(0, 0, 0, 0);
+  x.setDate(x.getDate() - ((x.getDay() + 6) % 7));
+  return x;
+}
+
+// The limits you've turned on, each with the first date it counts from.
+export function limitWindows(settings, now = new Date()) {
+  const L = settings?.limits || {};
+  const w = [];
+  if (L.day > 0) w.push({ key: 'day', label: 'today', short: 'today', max: +L.day, from: dateKey(now) });
+  if (L.week > 0) w.push({ key: 'week', label: 'this week', short: 'wk', max: +L.week, from: dateKey(weekStart(now)) });
+  if (L.month > 0) w.push({ key: 'month', label: 'this month', short: 'mo', max: +L.month, from: dateKey(new Date(now.getFullYear(), now.getMonth(), 1)) });
+  if (L.semester > 0 && L.semesterStart && L.semesterStart <= dateKey(now)) {
+    w.push({ key: 'semester', label: 'this semester', short: 'sem', max: +L.semester, from: L.semesterStart });
+  }
+  return w;
+}
+
+// How many passes a student has used in each window. Passes you marked "don't count" are skipped.
+export function passUsage(entries, windows) {
+  return windows.map(w => {
+    const used = entries.filter(e => !e.excused && e.date >= w.from).length;
+    return { key: w.key, label: w.label, short: w.short, max: w.max, used, left: Math.max(0, w.max - used) };
+  });
+}
+
+// The limit a student has run out of, if any.
+export const usedUp = usage => (usage || []).find(u => u.left <= 0) || null;
+
+// The tightest limit (fewest passes left), for a compact "2/3 wk" label.
+export const tightest = usage => (usage || []).slice().sort((a, b) => a.left - b.left)[0] || null;
+
+export const usedUpMsg = u => `You've used all ${u.max} of your passes ${u.label}. Talk to your teacher if it's an emergency.`;

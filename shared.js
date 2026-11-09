@@ -6,7 +6,7 @@
 // page needs to be open during class.
 import * as F from './fb.js';
 import { firebaseConfig } from './firebase-config.js';
-import { activeClass, noPassWindows, dateKey, decide, passStatus, fmtElapsed } from './logic.js';
+import { activeClass, noPassWindows, dateKey, decide, passStatus, fmtElapsed, limitWindows, passUsage, usedUp, usedUpMsg } from './logic.js';
 
 export const configured = !String(firebaseConfig.apiKey || '').includes('PASTE');
 const app = configured ? F.initializeApp(firebaseConfig) : null;
@@ -282,6 +282,16 @@ export async function leaveLine(code, studentId) {
   });
 }
 
+// ---------- pass limits ----------
+// Counts a student's passes from your log. Returns [] when no limits are on or the student has "No limit".
+export async function studentUsage(uid, T, stu) {
+  const w = limitWindows(T.settings);
+  if (!w.length || stu?.noLimit) return [];
+  const snap = await F.getDocs(F.query(logCol(uid), F.where('studentId', '==', stu.id)));
+  return passUsage(snap.docs.map(d => d.data()), w);
+}
+export const setExcused = (uid, logId, excused) => F.updateDoc(F.doc(logCol(uid), logId), { excused });
+
 // ---------- PIN check: runs only on the teacher's screen ----------
 const fails = new Map(); // device -> { n, until }
 function failed(dev, msg) {
@@ -320,7 +330,8 @@ export async function handleRequest(uid, T, code, req) {
       fails.delete(dev);
       const token = newId(24);
       await F.setDoc(tokenRef(uid, token), { sid: s.id, classId: a.cls.id, day: dateKey(), at: Date.now() });
-      return { ok: true, role: 'student', token, sid: s.id, name: s.name };
+      const usage = await studentUsage(uid, T, s).catch(() => []);
+      return { ok: true, role: 'student', token, sid: s.id, name: s.name, usage };
     }
 
     // Everything else needs a valid sign-in token from today, for the class that's here now.
@@ -333,11 +344,23 @@ export async function handleRequest(uid, T, code, req) {
       return { ok: false, expired: true, msg: 'Please type your PIN again.' };
     }
     const student = { id: stu.id, name: stu.name };
+    const usage = ['join', 'go', 'back'].includes(req.action) ? await studentUsage(uid, T, stu).catch(() => []) : undefined;
+    const hit = usedUp(usage);
     switch (req.action) {
-      case 'join': { const n = await joinLine(code, student); return { ok: true, msg: `You're #${n} in line` }; }
+      case 'join': {
+        if (hit) return { ok: false, msg: usedUpMsg(hit), usage };
+        const n = await joinLine(code, student); return { ok: true, msg: `You're #${n} in line`, usage };
+      }
       case 'leave': await leaveLine(code, student.id); return { ok: true, msg: 'You left the line' };
-      case 'go': await goOut(uid, code, student); return { ok: true, msg: 'Go straight there and back' };
-      case 'back': await comeBack(uid, code, student.id); return { ok: true, msg: 'Welcome back!' };
+      case 'go': {
+        // Limits are checked when joining the line. Someone already in line (or added by you) can go.
+        const rs = hit ? await F.getDoc(roomRef(code)) : null;
+        const inLine = (rs?.data()?.line || []).some(x => x.id === student.id);
+        if (hit && !inLine) return { ok: false, msg: usedUpMsg(hit), usage };
+        await goOut(uid, code, student);
+        return { ok: true, msg: 'Go straight there and back', usage: usage.map(u => ({ ...u, used: u.used + 1, left: Math.max(0, u.left - 1) })) };
+      }
+      case 'back': await comeBack(uid, code, student.id); return { ok: true, msg: 'Welcome back!', usage };
       case 'logout': await F.deleteDoc(tokenRef(uid, req.token)).catch(() => {}); return { ok: true };
       default: return { ok: false, msg: 'Unknown request' };
     }

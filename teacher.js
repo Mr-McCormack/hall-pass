@@ -1,9 +1,9 @@
 // Your dashboard: live view, classes and PINs, schedule, the day's log, and settings.
 import {
   getDocs, query, orderBy, limit, logCol, saveTeacher, rotateRoomCode, goOut, comeBack, joinLine, leaveLine,
-  hashPin, matchStudentPin, newId, esc, toast, tickTimers, lsGet, lsSet, backupText, savedKey
+  hashPin, matchStudentPin, newId, esc, toast, tickTimers, lsGet, lsSet, backupText, savedKey, studentUsage, setExcused
 } from './shared.js';
-import { DAY_NAMES, fmt12, fmtClock, currentPeriod, activeClass, shortName, byName, toMin, minToHHMM, overlaps, upList, dateKey } from './logic.js';
+import { DAY_NAMES, fmt12, fmtClock, currentPeriod, activeClass, shortName, byName, toMin, minToHHMM, overlaps, upList, dateKey, limitWindows, passUsage, usedUp, tightest } from './logic.js';
 
 export function mountDashboard(view, ctx) {
   const S = ctx.S;
@@ -12,6 +12,23 @@ export function mountDashboard(view, ctx) {
   let selClass = null, pendingRender = false;
   let log = null, logLoading = false, logDay = dateKey(), logClass = '';
   let idleTimer = null, manualPickId = '';
+  // passes used, per student, for the names shown on Live (refreshed when someone goes out)
+  const usageCache = new Map(); let lastOutIds = new Set();
+  const stuRec = sid => (T().classes || []).flatMap(c => c.students || []).find(s => s.id === sid);
+  function usagePill(sid) {
+    if (!limitWindows(T().settings).length) return '';
+    const rec = stuRec(sid);
+    if (rec?.noLimit) return '<span class="pill">no limit</span>';
+    const c = usageCache.get(sid);
+    if (!c) {
+      usageCache.set(sid, { loading: true });
+      studentUsage(uid(), T(), rec || { id: sid }).then(u => { usageCache.set(sid, { u }); if (tab === 'live') render(); })
+        .catch(() => usageCache.delete(sid));
+      return '';
+    }
+    const t = tightest(c.u);
+    return t ? `<span class="pill ${t.left ? '' : 'bad'}" title="Passes used ${esc(t.label)}">${t.used}/${t.max} ${t.short}</span>` : '';
+  }
 
   const T = () => S.T;
   const uid = () => S.uid;
@@ -81,18 +98,18 @@ export function mountDashboard(view, ctx) {
       <div class="grid3">
         <div class="card">
           <h2>Up next</h2>
-          ${ups.length ? `<ul class="list">${ups.map(u => `<li><span class="name">${esc(u.name)}</span>
+          ${ups.length ? `<ul class="list">${ups.map(u => `<li><span class="name">${esc(u.name)}</span>${usagePill(u.id)}
             <button class="btn sm primary" data-action="go" data-id="${u.id}">Left</button>
             <button class="btn sm ghost" data-action="skip" data-id="${u.id}">Skip</button></li>`).join('')}</ul>`
             : '<p class="muted">Nobody yet.</p>'}
         </div>
         <div class="card"><h2>Out now</h2>${(r?.out || []).length ? `<ul class="list">${r.out.map(o => `<li>
-            <span class="name">${esc(o.name)}</span><span class="muted">left ${fmtClock(o.since)}</span>
+            <span class="name">${esc(o.name)}</span>${usagePill(o.id)}<span class="muted">left ${fmtClock(o.since)}</span>
             <span class="timer" data-since="${o.since}"></span>
             <button class="btn sm primary" data-action="back" data-id="${o.id}">Back</button></li>`).join('')}</ul>`
             : '<p class="muted">Nobody is out.</p>'}</div>
         <div class="card"><h2>Line</h2>${(r?.line || []).length ? `<ol class="list">${r.line.map(x => `<li>
-            <span class="name">${esc(x.name)}</span>${upIds.has(x.id) ? '<span class="pill up">up</span>' : ''}
+            <span class="name">${esc(x.name)}</span>${usagePill(x.id)}${upIds.has(x.id) ? '<span class="pill up">up</span>' : ''}
             <button class="btn sm ghost" data-action="skip" data-id="${x.id}" title="Remove from line">✕</button></li>`).join('')}</ol>`
             : '<p class="muted">No one is waiting.</p>'}</div>
       </div>
@@ -150,7 +167,7 @@ export function mountDashboard(view, ctx) {
         <button class="btn ghost danger-text" data-action="delClass">Delete class</button>
       </div>
       <h3>Students (${st.length})${noPin ? ` <span class="pill warn">${noPin} without a PIN</span>` : ''}</h3>
-      ${st.length ? `<div class="tblwrap"><table class="tbl"><thead><tr><th>Name shown</th><th>PIN</th><th></th></tr></thead><tbody>
+      ${st.length ? `<div class="tblwrap"><table class="tbl"><thead><tr><th>Name shown</th><th>PIN</th><th title="Pass limits don't apply">No limit</th><th></th></tr></thead><tbody>
         ${st.map(s => `<tr>
           <td><input data-change="stuName" data-id="${s.id}" value="${esc(s.name)}"></td>
           <td><div class="row nowrap">
@@ -158,6 +175,7 @@ export function mountDashboard(view, ctx) {
             <input class="pin" inputmode="numeric" autocomplete="off" maxlength="8" placeholder="${s.pinHash ? 'New PIN' : 'PIN'}" data-pin="${s.id}">
             <button class="btn sm" data-action="setPin" data-id="${s.id}">Save</button>
           </div></td>
+          <td><input type="checkbox" data-change="stuNoLimit" data-id="${s.id}" ${s.noLimit ? 'checked' : ''} aria-label="No pass limit for ${esc(s.name)}"></td>
           <td><button class="btn sm ghost" data-action="delStu" data-id="${s.id}" title="Remove student">✕</button></td>
         </tr>`).join('')}</tbody></table></div>
         <p class="muted">PINs are 4 to 8 digits and must be different for each student in a class. They're stored scrambled,
@@ -260,20 +278,45 @@ export function mountDashboard(view, ctx) {
         ${top.length ? `<div><span class="muted">Most passes:</span><br>${top.map(([n, c]) => `${esc(n)} (${c})`).join(', ')}</div>` : ''}
       </div>
       ${overRows.length ? `<div class="flagbox"><b>Flagged:</b> ${overRows.map(h => `${esc(h.name)} (${h.minutes != null ? h.minutes + ' min' : 'still out'}${logDay ? '' : ', ' + esc(h.date)})`).join(', ')}</div>` : ''}
-      ${rows.length ? `<div class="tblwrap"><table class="tbl"><thead><tr>${logDay ? '' : '<th>Date</th>'}<th>Name</th><th>Class</th><th>Left</th><th>Back</th><th>Minutes</th><th></th></tr></thead><tbody>
+      ${rows.length ? `<div class="tblwrap"><table class="tbl"><thead><tr>${logDay ? '' : '<th>Date</th>'}<th>Name</th><th>Class</th><th>Left</th><th>Back</th><th>Minutes</th><th></th><th></th></tr></thead><tbody>
         ${rows.slice(0, 500).map(h => `<tr class="${isOver(h) ? 'over' : ''}">
           ${logDay ? '' : `<td>${esc(h.date)}</td>`}<td>${esc(h.name)}</td><td>${esc(h.className)}</td>
           <td>${fmtClock(h.out)}</td><td>${h.back ? fmtClock(h.back) : '<span class="muted">still out</span>'}</td>
           <td>${h.minutes ?? ''}</td>
-          <td>${isOver(h) ? `<span class="pill bad">over ${h.limitMin || 8} min</span>` : ''}${h.by === 'teacher' ? ' <span class="pill">sent by you</span>' : ''}</td></tr>`).join('')}
+          <td>${isOver(h) ? `<span class="pill bad">over ${h.limitMin || 8} min</span>` : ''}${h.by === 'teacher' ? ' <span class="pill">sent by you</span>' : ''}${h.excused ? ' <span class="pill">not counted</span>' : ''}</td>
+          <td><button class="btn sm ghost" data-action="excuse" data-id="${h.id}" title="${h.excused ? 'Count this pass toward limits again' : 'Emergency, nurse, etc.: don\'t count toward limits'}">${h.excused ? 'Count it' : "Don't count"}</button></td></tr>`).join('')}
       </tbody></table></div>` : `<p class="muted">No passes ${logDay === dateKey() ? 'yet today' : 'for this day'}.</p>`}
+    </div>
+    ${totalsCard()}`;
+  }
+
+  // Pass totals per student for the limits you've set (or this week / this month if none are set).
+  function totalsCard() {
+    let w = limitWindows(T().settings);
+    const limited = w.length > 0;
+    if (!limited) w = limitWindows({ limits: { week: 1e9, month: 1e9 } });
+    const classes = T().classes.filter(c => !logClass || c.name === logClass);
+    const rows = classes.flatMap(c => (c.students || []).map(s => {
+      const u = passUsage((log || []).filter(h => h.studentId === s.id), w);
+      return { s, c, u };
+    })).filter(r => r.u.some(x => x.used > 0) || (limited && !r.s.noLimit && r.u.some(x => !x.left)));
+    rows.sort((a, b) => Math.min(...a.u.map(x => x.left)) - Math.min(...b.u.map(x => x.left)) || byName(a.s, b.s));
+    return `<div class="card">
+      <h2>Pass totals</h2>
+      <p class="muted">${limited ? 'Passes used toward your limits. Red means used up.' : 'No pass limits are set (Settings → Pass limits). Here are counts for this week and month.'}
+        Passes marked "Don't count" are left out.</p>
+      ${rows.length ? `<div class="tblwrap"><table class="tbl"><thead><tr><th>Name</th>${classes.length > 1 ? '<th>Class</th>' : ''}
+        ${w.map(x => `<th>${esc(x.label)}${limited ? ` (max ${x.max})` : ''}</th>`).join('')}</tr></thead><tbody>
+        ${rows.map(({ s, c, u }) => `<tr><td>${esc(s.name)}${s.noLimit ? ' <span class="pill">no limit</span>' : ''}</td>${classes.length > 1 ? `<td>${esc(c.name)}</td>` : ''}
+          ${u.map(x => `<td class="${limited && !s.noLimit && !x.left ? 'danger-text' : ''}">${x.used}</td>`).join('')}</tr>`).join('')}
+      </tbody></table></div>` : '<p class="muted">No passes yet in these time frames.</p>'}
     </div>`;
   }
   function downloadCsv() {
     const q = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
-    const csv = ['Date,Name,Class,Period,Left,Back,Minutes,Limit,Too long',
+    const csv = ['Date,Name,Class,Period,Left,Back,Minutes,Limit,Too long,Counted',
       ...logRows().map(h => [h.date, h.name, h.className, h.periodName, fmtClock(h.out), h.back ? fmtClock(h.back) : '',
-        h.minutes ?? '', h.limitMin || '', isOver(h) ? 'YES' : ''].map(q).join(','))
+        h.minutes ?? '', h.limitMin || '', isOver(h) ? 'YES' : '', h.excused ? 'NO' : 'YES'].map(q).join(','))
     ].join('\n');
     const a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
@@ -293,6 +336,21 @@ export function mountDashboard(view, ctx) {
         <label class="field">Students out at once<span class="unit"><input type="number" min="1" max="5" data-change="maxOut" value="${s.maxOut || 1}"></span></label>
       </div>
       <p class="muted">A pass longer than the time limit turns red on every screen and is flagged in the Log.</p>
+    </div>
+    <div class="card">
+      <h2>Pass limits</h2>
+      <p class="muted">How many passes each student gets. Leave a box empty for no limit. Students see how many they have left,
+        and can't get in line once they run out. You can still send them yourself.</p>
+      <div class="row">
+        <label class="field">Per day<input type="number" min="0" max="50" class="num" data-change="limit" data-k="day" value="${s.limits?.day || ''}" placeholder="No limit"></label>
+        <label class="field">Per week<input type="number" min="0" max="50" class="num" data-change="limit" data-k="week" value="${s.limits?.week || ''}" placeholder="No limit"></label>
+        <label class="field">Per month<input type="number" min="0" max="100" class="num" data-change="limit" data-k="month" value="${s.limits?.month || ''}" placeholder="No limit"></label>
+        <label class="field">Per semester<input type="number" min="0" max="200" class="num" data-change="limit" data-k="semester" value="${s.limits?.semester || ''}" placeholder="No limit"></label>
+        <label class="field">Semester started<input type="date" data-change="semesterStart" value="${esc(s.limits?.semesterStart || '')}"></label>
+      </div>
+      ${s.limits?.semester > 0 && !s.limits?.semesterStart ? '<p class="danger-text">Set the date the semester started so the semester limit can count.</p>' : ''}
+      <p class="muted small">Weeks start Monday. Passes you mark "Don't count" in the Log don't count. Students with "No limit" checked on the Classes page are never limited.
+        At the start of a new semester, change the start date and the count starts over.</p>
     </div>
     <div class="card">
       <h2>Your screen</h2>
@@ -329,6 +387,11 @@ export function mountDashboard(view, ctx) {
     </div>`;
   }
 
+  async function okOverLimit(s) {
+    const hit = usedUp(await studentUsage(uid(), T(), stuRec(s.id) || s).catch(() => []));
+    return !hit || confirm(`${s.name} has used ${hit.used} of ${hit.max} passes ${hit.label}. Go ahead anyway?`);
+  }
+
   // ---------- clicks ----------
   view.onclick = async e => {
     const top = e.target.closest('[data-top]')?.dataset.top;
@@ -352,8 +415,8 @@ export function mountDashboard(view, ctx) {
         case 'back': await comeBack(uid(), code(), id); break;
         case 'skip': await leaveLine(code(), id); break;
         case 'pause': await save({ 'settings.paused': !T().settings.paused }, true); break;
-        case 'mGo': { const s = rosterFind($('#manualPick').value); if (s) await goOut(uid(), code(), { id: s.id, name: s.name }, { force: true }); break; }
-        case 'mLine': { const s = rosterFind($('#manualPick').value); if (s) { const n = await joinLine(code(), { id: s.id, name: s.name }); toast(`${s.name} is #${n} in line`); } break; }
+        case 'mGo': { const s = rosterFind($('#manualPick').value); if (s && await okOverLimit(s)) await goOut(uid(), code(), { id: s.id, name: s.name }, { force: true }); break; }
+        case 'mLine': { const s = rosterFind($('#manualPick').value); if (s && await okOverLimit(s)) { const n = await joinLine(code(), { id: s.id, name: s.name }); toast(`${s.name} is #${n} in line`); } break; }
         case 'rotate':
           if (confirm('Make a new room code? Students will need the new code or link.')) { await rotateRoomCode(uid(), T()); toast('New code ready'); }
           break;
@@ -427,6 +490,15 @@ export function mountDashboard(view, ctx) {
         }
         // log & settings
         case 'logRefresh': log = null; render(true); break;
+        case 'excuse': {
+          const h = (log || []).find(x => x.id === id);
+          if (!h) break;
+          h.excused = !h.excused;
+          await setExcused(uid(), id, h.excused);
+          usageCache.delete(h.studentId);
+          toast(h.excused ? `${h.name}'s pass won't count toward limits` : `${h.name}'s pass counts again`);
+          render(true); break;
+        }
         case 'logCsv': downloadCsv(); break;
         case 'teacherPin': {
           const p1 = $('#tp1').value.trim(), p2 = $('#tp2').value.trim();
@@ -469,6 +541,7 @@ export function mountDashboard(view, ctx) {
     switch (kind) {
       case 'override': await save({ 'settings.override': el.value }, true); el.blur(); break;
       case 'className': { const c = findClass(selClass); if (el.value.trim()) { c.name = el.value.trim(); await saveClasses(); } break; }
+      case 'stuNoLimit': { const s = findStu(el.dataset.id); if (s) { s.noLimit = el.checked; await saveClasses(); } break; }
       case 'stuName': { const s = findStu(el.dataset.id); if (s && el.value.trim()) { s.name = el.value.trim(); await saveClasses(); } break; }
       case 'p': {
         const f = el.dataset.field;
@@ -484,6 +557,11 @@ export function mountDashboard(view, ctx) {
       case 'logDay': logDay = el.value; render(true); break;
       case 'logClass': logClass = el.value; render(true); break;
       case 'maxOut': await save({ 'settings.maxOut': Math.min(5, Math.max(1, Number(el.value) || 1)) }); break;
+      case 'limit': {
+        const v = Math.max(0, Math.floor(Number(el.value) || 0));
+        await save({ [`settings.limits.${el.dataset.k}`]: v || null }); usageCache.clear(); break;
+      }
+      case 'semesterStart': await save({ 'settings.limits.semesterStart': el.value || null }); usageCache.clear(); break;
       case 'timeLimit': await save({ 'settings.timeLimitMin': Math.min(60, Math.max(1, Number(el.value) || 8)) }); break;
       case 'autoLock': await save({ 'settings.autoLockMin': Math.min(120, Math.max(0, Number(el.value) || 0)) }); resetIdle(); break;
       case 'chime': lsSet('hp-chime', el.checked ? null : 'off'); break;
@@ -493,7 +571,17 @@ export function mountDashboard(view, ctx) {
   render(true);
   let ticks = 0;
   return {
-    update: () => { if (tab === 'live') render(); },
+    update: () => {
+      const ids = new Set((room()?.out || []).map(o => o.id));
+      // A new pass was just started. Its log entry is written a moment after, so re-count shortly.
+      ids.forEach(id => {
+        if (lastOutIds.has(id)) return;
+        usageCache.delete(id);
+        setTimeout(() => { usageCache.delete(id); if (tab === 'live') render(); }, 2500);
+      });
+      lastOutIds = ids;
+      if (tab === 'live') render();
+    },
     tick: () => { if (tab === 'live' && ++ticks % 15 === 0) render(); }, // no-pass times start on the clock
     updateT: () => { render(); resetIdle(); },
     destroy: () => {
