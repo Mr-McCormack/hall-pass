@@ -211,3 +211,25 @@ hr.sep { border: 0; border-top: 1px solid var(--line); margin: 1.25rem 0; }
 .passes-left b { color: var(--text); }
 
 input.num { width: 6.5rem; }
+
+/* floating window: full card vs. thin strip. Short windows always get the strip. */
+.fl-full { display: contents; }
+.fl-size { position: absolute; top: .35rem; right: .4rem; width: 1.8rem; height: 1.8rem; border-radius: 6px; border: 1px solid var(--line); background: var(--surface); color: var(--muted); font: 700 1rem/1 system-ui, sans-serif; cursor: pointer; padding: 0; }
+.fl-size:hover { color: var(--text); }
+.fl { position: relative; }
+.fl-strip { display: none; }
+@media (max-height: 130px) {
+  .fl { border-top: 0; border-left: 8px solid var(--muted); padding: 0 .4rem 0 .6rem; justify-content: center; }
+  .fl.open { border-left-color: var(--ok); } .fl.up { border-left-color: var(--up); } .fl.full { border-left-color: var(--warn); }
+  .fl.nopass, .fl.paused, .fl.over { border-left-color: var(--bad); }
+  .fl-full { display: none; }
+  .fl-strip { display: flex; align-items: center; gap: .45rem; height: 100%; overflow: hidden; white-space: nowrap; }
+  .fl-strip .si { font-size: 1rem; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+  .fl-strip .si b { font-weight: 800; }
+  .fl.up .fl-strip .si b { color: var(--up); }
+  .fl.nopass .fl-strip .si, .fl.paused .fl-strip .si, .fl.over .fl-strip .timer { color: var(--bad); font-weight: 700; }
+  .fl.open .fl-strip .si { color: var(--ok); font-weight: 700; }
+  .fl-strip .fl-btn { padding: .4rem .65rem; font-size: .9rem; flex: none; }
+  .fl-strip .fl-size { position: static; margin-left: auto; flex: none; }
+  .fl-dot { display: none; }
+}

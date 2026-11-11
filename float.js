@@ -1,19 +1,24 @@
 // The floating window: a small always-on-top window for your screen.
 // In Chrome and Edge it uses Picture-in-Picture, so it floats over every app (PowerPoint, Desmos, etc.).
 // In other browsers it falls back to a small pop-up window.
-import { goOut, comeBack, leaveLine, esc, toast, tickTimers, lsGet } from './shared.js';
+import { goOut, comeBack, leaveLine, esc, toast, tickTimers, lsGet, lsSet } from './shared.js';
 import { passStatus, upList } from './logic.js';
 
 let win = null;
 let lastUps = null;
 let audioCtx = null;
 
+// Two sizes: the full card, and a thin one-line strip. The layout also adapts if you drag the
+// window to any size in between: short windows always get the strip layout.
+const FULL = { w: 360, h: 250 }, STRIP = { w: 380, h: 56 };
+const isStrip = () => lsGet('hp-float-size') === 'strip';
+
 export const floatIsOpen = () => !!win && !win.closed;
 export function closeFloat() { try { win?.close(); } catch { /* ignore */ } win = null; }
 
 export async function openFloat(ctx) {
   if (floatIsOpen()) { try { win.focus(); } catch { /* ignore */ } return; }
-  const w = 360, h = 250;
+  const { w, h } = isStrip() ? STRIP : FULL;
   win = null;
   if ('documentPictureInPicture' in window) {
     try { win = await window.documentPictureInPicture.requestWindow({ width: w, height: h }); } catch { win = null; }
@@ -77,6 +82,20 @@ export function floatUpdate(ctx) {
   else if (out.length) { state = 'full'; main = `${esc(out[0].name)} is out`; }
   else main = esc(st.label);
 
+  // one-line version for the strip
+  const stripItems = [
+    ...ups.map(u => `<span class="si"><b>${esc(u.name)}</b> is up</span>
+      <button class="fl-btn go" data-fa="go" data-id="${u.id}" title="Mark as left the room">Left</button>
+      <button class="fl-btn ghost" data-fa="skip" data-id="${u.id}" title="Take out of the line">Skip</button>`),
+    ...out.map(o => `<span class="si"><b>${esc(o.name)}</b> <span class="timer" data-since="${o.since}"></span></span>
+      <button class="fl-btn back" data-fa="back" data-id="${o.id}" title="Mark as back">Back</button>`),
+  ];
+  const waitingN = line.filter(x => !ids.has(x.id)).length;
+  const strip = `<div class="fl-strip"><span class="fl-dot"></span>
+    ${stripItems.length ? stripItems.join('') : `<span class="si">${esc(st.label)}</span>`}
+    ${waitingN ? `<span class="si muted">+${waitingN} waiting</span>` : ''}
+    <button class="fl-size" data-fa="size" title="Make bigger" aria-label="Make bigger">⤢</button></div>`;
+
   const rows = [
     ...ups.map(u => `<div class="fl-row"><span class="name">${esc(u.name)}</span>
       <button class="fl-btn go" data-fa="go" data-id="${u.id}" title="Mark as left the room">Left</button>
@@ -94,7 +113,10 @@ export function floatUpdate(ctx) {
 
   const wasUp = el.classList.contains('up');
   el.className = `fl ${state}`;
-  el.innerHTML = `<div class="fl-main">${main}</div>${rows ? `<div class="fl-rows">${rows}</div>` : ''}<div class="fl-foot">${foot}</div>`;
+  el.innerHTML = `<div class="fl-full">
+      <button class="fl-size" data-fa="size" title="Shrink to a thin strip" aria-label="Shrink to a thin strip">–</button>
+      <div class="fl-main">${main}</div>${rows ? `<div class="fl-rows">${rows}</div>` : ''}<div class="fl-foot">${foot}</div>
+    </div>${strip}`;
   if (fresh && !wasUp) { el.classList.add('flash'); setTimeout(() => el.classList.remove('flash'), 3000); }
   floatTick(ctx);
 }
@@ -118,6 +140,15 @@ async function floatClick(ctx, e) {
   if (!b) return;
   const { uid, code, room } = ctx.S;
   const id = b.dataset.id;
+  if (b.dataset.fa === 'size') {
+    // switch between the full card and the strip (the window's frame adds a little to its size)
+    const toStrip = win.innerHeight > 130;
+    const want = toStrip ? STRIP : FULL;
+    lsSet('hp-float-size', toStrip ? 'strip' : null);
+    try { win.resizeTo(want.w + (win.outerWidth - win.innerWidth), want.h + (win.outerHeight - win.innerHeight)); }
+    catch { /* some browsers don't allow it; dragging the edge works too */ }
+    return;
+  }
   b.disabled = true;
   try {
     if (b.dataset.fa === 'go') {
