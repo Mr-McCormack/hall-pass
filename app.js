@@ -250,7 +250,7 @@ function showPad(note = '') {
       if (isT) { ssSet('hp-unlocked', '1'); showDashboard(); } else showTeacherSetup(true);
       return;
     }
-    S.session = { token: r.token, sid: r.sid, name: r.name, usage: r.usage || [] };
+    S.session = { token: r.token, sid: r.sid, name: r.name, usage: r.usage || [], anytime: !!r.anytime };
     if (!isT) lsSet('hp-sess-' + S.code, JSON.stringify(S.session));
     showStudent();
   }, note);
@@ -382,6 +382,9 @@ function showStudent() {
     if (isOut) {
       html = `<p class="eyebrow">You're out</p><p class="huge-time"><span class="timer" data-since="${isOut.since}"></span></p>
         <button class="btn primary xl" data-a="back">I'm back</button>`;
+    } else if (S.session.anytime && st.state !== 'closed') {
+      html = `<p class="big">You can go any time</p><p class="muted">Tap the button as you leave the room.</p>
+        <button class="btn primary xl" data-a="go">I'm leaving now</button>`;
     } else if (pos >= 0 && d.action === 'go') {
       up = true;
       html = `<p class="up-banner">${name}, you're up!</p><p class="muted">Tap the button as you leave the room.</p>
@@ -448,6 +451,7 @@ function showStudent() {
       S.session = null;
       return showPad(r.msg);
     }
+    if (S.session && 'anytime' in r) S.session.anytime = !!r.anytime;
     if (r.usage && S.session) {
       S.session.usage = r.usage;
       if (!local) lsSet('hp-sess-' + S.code, JSON.stringify(S.session));

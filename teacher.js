@@ -18,7 +18,7 @@ export function mountDashboard(view, ctx) {
   function usagePill(sid) {
     if (!limitWindows(T().settings).length) return '';
     const rec = stuRec(sid);
-    if (rec?.noLimit) return '<span class="pill">no limit</span>';
+    if (rec?.noLimit || rec?.anytime) return '';
     const c = usageCache.get(sid);
     if (!c) {
       usageCache.set(sid, { loading: true });
@@ -167,7 +167,7 @@ export function mountDashboard(view, ctx) {
         <button class="btn ghost danger-text" data-action="delClass">Delete class</button>
       </div>
       <h3>Students (${st.length})${noPin ? ` <span class="pill warn">${noPin} without a PIN</span>` : ''}</h3>
-      ${st.length ? `<div class="tblwrap"><table class="tbl"><thead><tr><th>Name shown</th><th>PIN</th><th title="Pass limits don't apply">No limit</th><th></th></tr></thead><tbody>
+      ${st.length ? `<div class="tblwrap"><table class="tbl"><thead><tr><th>Name shown</th><th>PIN</th><th title="Pass limits don't apply">No limit</th><th title="Can go any time: skips the line, no-pass times and limits, and doesn't take up the out spot">Any time</th><th></th></tr></thead><tbody>
         ${st.map(s => `<tr>
           <td><input data-change="stuName" data-id="${s.id}" value="${esc(s.name)}"></td>
           <td><div class="row nowrap">
@@ -176,10 +176,12 @@ export function mountDashboard(view, ctx) {
             <button class="btn sm" data-action="setPin" data-id="${s.id}">Save</button>
           </div></td>
           <td><input type="checkbox" data-change="stuNoLimit" data-id="${s.id}" ${s.noLimit ? 'checked' : ''} aria-label="No pass limit for ${esc(s.name)}"></td>
+          <td><input type="checkbox" data-change="stuAnytime" data-id="${s.id}" ${s.anytime ? 'checked' : ''} aria-label="${esc(s.name)} can go any time"></td>
           <td><button class="btn sm ghost" data-action="delStu" data-id="${s.id}" title="Remove student">✕</button></td>
         </tr>`).join('')}</tbody></table></div>
         <p class="muted">PINs are 4 to 8 digits and must be different for each student in a class. They're stored scrambled,
-          so you can set a new one any time but can't look an old one up.</p>`
+          so you can set a new one any time but can't look an old one up.</p>
+        <p class="muted"><b>No limit:</b> pass limits don't apply. <b>Any time:</b> the student can leave whenever they need to, skipping the line, no-pass times and limits, without taking up the one-out spot (for medical or other plans). Other students just see a normal pass.</p>`
         : '<p class="muted">No students yet.</p>'}
       <h3>Add students</h3>
       <p class="muted">Paste one per line, like <code>Maria Lopez</code> or <code>Lopez, Maria</code>. Only the first initial and last name are saved (Maria Lopez → M. Lopez). You can edit the shown name afterward if two students match.</p>
@@ -283,7 +285,7 @@ export function mountDashboard(view, ctx) {
           ${logDay ? '' : `<td>${esc(h.date)}</td>`}<td>${esc(h.name)}</td><td>${esc(h.className)}</td>
           <td>${fmtClock(h.out)}</td><td>${h.back ? fmtClock(h.back) : '<span class="muted">still out</span>'}</td>
           <td>${h.minutes ?? ''}</td>
-          <td>${isOver(h) ? `<span class="pill bad">over ${h.limitMin || 8} min</span>` : ''}${h.by === 'teacher' ? ' <span class="pill">sent by you</span>' : ''}${h.excused ? ' <span class="pill">not counted</span>' : ''}</td>
+          <td>${isOver(h) ? `<span class="pill bad">over ${h.limitMin || 8} min</span>` : ''}${h.by === 'teacher' ? ' <span class="pill">sent by you</span>' : ''}${h.excused ? ' <span class="pill">not counted</span>' : ''}${h.anytime ? ' <span class="pill">any-time pass</span>' : ''}</td>
           <td><button class="btn sm ghost" data-action="excuse" data-id="${h.id}" title="${h.excused ? 'Count this pass toward limits again' : 'Emergency, nurse, etc.: don\'t count toward limits'}">${h.excused ? 'Count it' : "Don't count"}</button></td></tr>`).join('')}
       </tbody></table></div>` : `<p class="muted">No passes ${logDay === dateKey() ? 'yet today' : 'for this day'}.</p>`}
     </div>
@@ -299,7 +301,7 @@ export function mountDashboard(view, ctx) {
     const rows = classes.flatMap(c => (c.students || []).map(s => {
       const u = passUsage((log || []).filter(h => h.studentId === s.id), w);
       return { s, c, u };
-    })).filter(r => r.u.some(x => x.used > 0) || (limited && !r.s.noLimit && r.u.some(x => !x.left)));
+    })).filter(r => r.u.some(x => x.used > 0) || (limited && !r.s.noLimit && !r.s.anytime && r.u.some(x => !x.left)));
     rows.sort((a, b) => Math.min(...a.u.map(x => x.left)) - Math.min(...b.u.map(x => x.left)) || byName(a.s, b.s));
     return `<div class="card">
       <h2>Pass totals</h2>
@@ -308,7 +310,7 @@ export function mountDashboard(view, ctx) {
       ${rows.length ? `<div class="tblwrap"><table class="tbl"><thead><tr><th>Name</th>${classes.length > 1 ? '<th>Class</th>' : ''}
         ${w.map(x => `<th>${esc(x.label)}${limited ? ` (max ${x.max})` : ''}</th>`).join('')}</tr></thead><tbody>
         ${rows.map(({ s, c, u }) => `<tr><td>${esc(s.name)}${s.noLimit ? ' <span class="pill">no limit</span>' : ''}</td>${classes.length > 1 ? `<td>${esc(c.name)}</td>` : ''}
-          ${u.map(x => `<td class="${limited && !s.noLimit && !x.left ? 'danger-text' : ''}">${x.used}</td>`).join('')}</tr>`).join('')}
+          ${u.map(x => `<td class="${limited && !s.noLimit && !s.anytime && !x.left ? 'danger-text' : ''}">${x.used}</td>`).join('')}</tr>`).join('')}
       </tbody></table></div>` : '<p class="muted">No passes yet in these time frames.</p>'}
     </div>`;
   }
@@ -415,7 +417,7 @@ export function mountDashboard(view, ctx) {
         case 'back': await comeBack(uid(), code(), id); break;
         case 'skip': await leaveLine(code(), id); break;
         case 'pause': await save({ 'settings.paused': !T().settings.paused }, true); break;
-        case 'mGo': { const s = rosterFind($('#manualPick').value); if (s && await okOverLimit(s)) await goOut(uid(), code(), { id: s.id, name: s.name }, { force: true }); break; }
+        case 'mGo': { const s = rosterFind($('#manualPick').value); if (s && await okOverLimit(s)) await goOut(uid(), code(), { id: s.id, name: s.name }, { force: true, anytime: !!stuRec(s.id)?.anytime }); break; }
         case 'mLine': { const s = rosterFind($('#manualPick').value); if (s && await okOverLimit(s)) { const n = await joinLine(code(), { id: s.id, name: s.name }); toast(`${s.name} is #${n} in line`); } break; }
         case 'rotate':
           if (confirm('Make a new room code? Students will need the new code or link.')) { await rotateRoomCode(uid(), T()); toast('New code ready'); }
@@ -541,6 +543,7 @@ export function mountDashboard(view, ctx) {
     switch (kind) {
       case 'override': await save({ 'settings.override': el.value }, true); el.blur(); break;
       case 'className': { const c = findClass(selClass); if (el.value.trim()) { c.name = el.value.trim(); await saveClasses(); } break; }
+      case 'stuAnytime': { const s = findStu(el.dataset.id); if (s) { s.anytime = el.checked; await saveClasses(); toast(el.checked ? `${s.name} can go any time` : `${s.name} follows the normal rules`); } break; }
       case 'stuNoLimit': { const s = findStu(el.dataset.id); if (s) { s.noLimit = el.checked; await saveClasses(); } break; }
       case 'stuName': { const s = findStu(el.dataset.id); if (s && el.value.trim()) { s.name = el.value.trim(); await saveClasses(); } break; }
       case 'p': {

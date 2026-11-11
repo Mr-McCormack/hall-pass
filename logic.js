@@ -109,6 +109,9 @@ export function overlaps(periods) {
   return bad;
 }
 
+// Students out on an any-time pass don't count toward "students out at once".
+export const regularOut = room => (room?.out || []).filter(o => !o.anytime);
+
 // The room right now: open / up / full / nopass / paused / closed.
 export function passStatus(room, d = new Date()) {
   if (!room || !room.period) return { state: 'closed', label: 'No class right now' };
@@ -116,7 +119,7 @@ export function passStatus(room, d = new Date()) {
   const t = minutesNow(d);
   const win = (room.period.windows || []).find(w => t >= toMin(w.start) && t < toMin(w.end));
   if (win) return { state: 'nopass', label: `No passes until ${fmt12(win.end)}` };
-  const out = (room.out || []).length, max = room.maxOut || 1;
+  const out = regularOut(room).length, max = room.maxOut || 1;
   if (out >= max) return { state: 'full', label: max === 1 ? 'Someone is out' : 'Passes are full' };
   const line = room.line || [];
   if (line.length) return { state: 'up', label: `${line[0].name}, you're up!` };
@@ -127,7 +130,7 @@ export function passStatus(room, d = new Date()) {
 export function upList(room, d = new Date()) {
   const st = passStatus(room, d).state;
   if (st !== 'up') return [];
-  const free = (room.maxOut || 1) - (room.out || []).length;
+  const free = (room.maxOut || 1) - regularOut(room).length;
   return (room.line || []).slice(0, Math.max(0, free));
 }
 
@@ -138,7 +141,7 @@ export function decide(room, studentId, d = new Date()) {
   if (st.state === 'closed') return { action: 'blocked', reason: st.label, canLine: false };
   if (st.state === 'paused' || st.state === 'nopass') return { action: 'blocked', reason: st.label, canLine: true };
   const line = room.line || [];
-  const free = (room.maxOut || 1) - (room.out || []).length;
+  const free = (room.maxOut || 1) - regularOut(room).length;
   const pos = line.findIndex(x => x.id === studentId);
   const myTurn = pos === -1 ? line.length < free : pos < free;
   if (myTurn) return { action: 'go' };

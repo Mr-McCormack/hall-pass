@@ -206,7 +206,7 @@ export async function rotateRoomCode(uid, T) {
 
 // ---------- pass actions (run by the teacher's screen) ----------
 // force=true is the teacher overriding the line and no-pass times.
-export async function goOut(uid, code, student, { force = false } = {}) {
+export async function goOut(uid, code, student, { force = false, anytime = false } = {}) {
   const logRef = F.doc(logCol(uid));
   let info = null;
   await F.runTransaction(db, async tx => {
@@ -215,14 +215,14 @@ export async function goOut(uid, code, student, { force = false } = {}) {
     if (!snap.exists()) throw new Error('Room not found');
     const room = snap.data();
     if ((room.out || []).some(o => o.id === student.id)) return;
-    if (!force) {
+    if (!force && !anytime) {
       const d = decide(room, student.id);
       if (d.action !== 'go') throw new Error(d.reason || "It's not your turn yet");
     }
     const since = Date.now(), limitMin = room.timeLimitMin || 8;
     info = { className: room.period?.className || '', periodName: room.period?.name || '', since, limitMin };
     tx.update(ref, {
-      out: [...(room.out || []), { id: student.id, name: student.name, since, limitMin, logId: logRef.id }],
+      out: [...(room.out || []), { id: student.id, name: student.name, since, limitMin, logId: logRef.id, ...(anytime ? { anytime: true } : {}) }],
       line: (room.line || []).filter(x => x.id !== student.id)
     });
   });
@@ -230,7 +230,7 @@ export async function goOut(uid, code, student, { force = false } = {}) {
     await F.setDoc(logRef, {
       studentId: student.id, name: student.name, className: info.className, periodName: info.periodName,
       date: dateKey(new Date(info.since)), out: info.since, back: null, minutes: null,
-      limitMin: info.limitMin, over: false, by: force ? 'teacher' : 'student'
+      limitMin: info.limitMin, over: false, by: force && !anytime ? 'teacher' : 'student', anytime: !!anytime
     });
   }
 }
@@ -286,7 +286,7 @@ export async function leaveLine(code, studentId) {
 // Counts a student's passes from your log. Returns [] when no limits are on or the student has "No limit".
 export async function studentUsage(uid, T, stu) {
   const w = limitWindows(T.settings);
-  if (!w.length || stu?.noLimit) return [];
+  if (!w.length || stu?.noLimit || stu?.anytime) return [];
   const snap = await F.getDocs(F.query(logCol(uid), F.where('studentId', '==', stu.id)));
   return passUsage(snap.docs.map(d => d.data()), w);
 }
@@ -331,7 +331,7 @@ export async function handleRequest(uid, T, code, req) {
       const token = newId(24);
       await F.setDoc(tokenRef(uid, token), { sid: s.id, classId: a.cls.id, day: dateKey(), at: Date.now() });
       const usage = await studentUsage(uid, T, s).catch(() => []);
-      return { ok: true, role: 'student', token, sid: s.id, name: s.name, usage };
+      return { ok: true, role: 'student', token, sid: s.id, name: s.name, usage, anytime: !!s.anytime };
     }
 
     // Everything else needs a valid sign-in token from today, for the class that's here now.
@@ -346,22 +346,24 @@ export async function handleRequest(uid, T, code, req) {
     const student = { id: stu.id, name: stu.name };
     const usage = ['join', 'go', 'back'].includes(req.action) ? await studentUsage(uid, T, stu).catch(() => []) : undefined;
     const hit = usedUp(usage);
+    const R = o => ({ ...o, anytime: !!stu.anytime }); // keeps the student's screen up to date
     switch (req.action) {
       case 'join': {
-        if (hit) return { ok: false, msg: usedUpMsg(hit), usage };
-        const n = await joinLine(code, student); return { ok: true, msg: `You're #${n} in line`, usage };
+        if (hit) return R({ ok: false, msg: usedUpMsg(hit), usage });
+        const n = await joinLine(code, student); return R({ ok: true, msg: `You're #${n} in line`, usage });
       }
-      case 'leave': await leaveLine(code, student.id); return { ok: true, msg: 'You left the line' };
+      case 'leave': await leaveLine(code, student.id); return R({ ok: true, msg: 'You left the line' });
       case 'go': {
+        if (stu.anytime) { await goOut(uid, code, student, { anytime: true }); return R({ ok: true, msg: 'Go ahead', usage: [], anytime: true }); }
         // Limits are checked when joining the line. Someone already in line (or added by you) can go.
         const rs = hit ? await F.getDoc(roomRef(code)) : null;
         const inLine = (rs?.data()?.line || []).some(x => x.id === student.id);
-        if (hit && !inLine) return { ok: false, msg: usedUpMsg(hit), usage };
+        if (hit && !inLine) return R({ ok: false, msg: usedUpMsg(hit), usage });
         await goOut(uid, code, student);
-        return { ok: true, msg: 'Go straight there and back', usage: usage.map(u => ({ ...u, used: u.used + 1, left: Math.max(0, u.left - 1) })) };
+        return R({ ok: true, msg: 'Go straight there and back', usage: usage.map(u => ({ ...u, used: u.used + 1, left: Math.max(0, u.left - 1) })) });
       }
-      case 'back': await comeBack(uid, code, student.id); return { ok: true, msg: 'Welcome back!', usage };
-      case 'logout': await F.deleteDoc(tokenRef(uid, req.token)).catch(() => {}); return { ok: true };
+      case 'back': await comeBack(uid, code, student.id); return R({ ok: true, msg: 'Welcome back!', usage });
+      case 'logout': await F.deleteDoc(tokenRef(uid, req.token)).catch(() => {}); return R({ ok: true });
       default: return { ok: false, msg: 'Unknown request' };
     }
   } catch (e) {
