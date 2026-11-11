@@ -393,7 +393,8 @@ function showStudent() {
         <div class="row center"><button class="btn primary xl" data-a="go">I'm leaving now</button></div>
         <button class="btn ghost sm" data-a="leave">Leave the line</button>`;
     } else if (pos < 0 && usedUp(S.session.usage) && Date.now() - (S.session.usageAt || 0) < 120000 && st.state !== 'closed') {
-      html = `<p class="big">No passes left</p><p class="muted">${esc(usedUpMsg(usedUp(S.session.usage)))}</p>`;
+      // Your own GIF: upload a file named no-passes.gif to the site. If there isn't one, nothing shows.
+      html = `<img class="nopass-gif" src="no-passes.gif" alt="" onerror="this.remove()"><p class="big">No passes left</p><p class="muted">${esc(usedUpMsg(usedUp(S.session.usage)))}</p>`;
     } else if (pos >= 0) {
       html = `<p class="big">You're #${pos + 1} in line</p>
         <p class="muted">${esc(d.reason || st.label)}. This page will tell you when it's your turn.</p>

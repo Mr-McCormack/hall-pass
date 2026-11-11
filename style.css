@@ -233,3 +233,5 @@ input.num { width: 6.5rem; }
   .fl-strip .fl-size { position: static; margin-left: auto; flex: none; }
   .fl-dot { display: none; }
 }
+
+.nopass-gif { display: block; max-width: 220px; max-height: 180px; width: auto; height: auto; margin: 0 auto .75rem; border-radius: 10px; }
