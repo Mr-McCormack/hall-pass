@@ -226,13 +226,15 @@ export async function goOut(uid, code, student, { force = false, anytime = false
       line: (room.line || []).filter(x => x.id !== student.id)
     });
   });
-  if (info) {
+  if (!info) return false; // already out: nothing new logged
+  {
     await F.setDoc(logRef, {
       studentId: student.id, name: student.name, className: info.className, periodName: info.periodName,
       date: dateKey(new Date(info.since)), out: info.since, back: null, minutes: null,
       limitMin: info.limitMin, over: false, by: force && !anytime ? 'teacher' : 'student', anytime: !!anytime
     });
   }
+  return true;
 }
 
 export async function comeBack(uid, code, studentId) {
@@ -359,8 +361,8 @@ export async function handleRequest(uid, T, code, req) {
         const rs = hit ? await F.getDoc(roomRef(code)) : null;
         const inLine = (rs?.data()?.line || []).some(x => x.id === student.id);
         if (hit && !inLine) return R({ ok: false, msg: usedUpMsg(hit), usage });
-        await goOut(uid, code, student);
-        return R({ ok: true, msg: 'Go straight there and back', usage: usage.map(u => ({ ...u, used: u.used + 1, left: Math.max(0, u.left - 1) })) });
+        const logged = await goOut(uid, code, student);
+        return R({ ok: true, msg: 'Go straight there and back', usage: logged ? usage.map(u => ({ ...u, used: u.used + 1, left: Math.max(0, u.left - 1) })) : usage });
       }
       case 'back': await comeBack(uid, code, student.id); return R({ ok: true, msg: 'Welcome back!', usage });
       case 'logout': await F.deleteDoc(tokenRef(uid, req.token)).catch(() => {}); return R({ ok: true });

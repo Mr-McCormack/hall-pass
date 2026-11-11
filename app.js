@@ -7,7 +7,7 @@ import {
   ensureTeacher, syncRoom, startProcessor, handleRequest, sendRequest, hashPin, matchStudentPin, saveTeacher,
   signOutNow, esc, toast, setupNotice, tickTimers, lsGet, lsSet, ssGet, ssSet
 } from './shared.js';
-import { passStatus, decide, upList, usedUp, usedUpMsg } from './logic.js';
+import { passStatus, decide, upList, usedUp, usedUpMsg, dateKey } from './logic.js';
 import { mountDashboard } from './teacher.js';
 import { openFloat, floatUpdate, floatTick, floatIsOpen, closeFloat } from './float.js';
 
@@ -81,6 +81,8 @@ async function onAuth(u) {
 function useRoom(code) {
   S.code = code;
   try { S.session = JSON.parse(lsGet('hp-sess-' + code) || 'null'); } catch { S.session = null; }
+  // Sign-ins last one day. Drop an older one so yesterday's pass count never shows.
+  if (S.session && S.session.day !== dateKey()) { lsSet('hp-sess-' + code, null); S.session = null; }
   watchRoom(code);
 }
 
@@ -250,7 +252,7 @@ function showPad(note = '') {
       if (isT) { ssSet('hp-unlocked', '1'); showDashboard(); } else showTeacherSetup(true);
       return;
     }
-    S.session = { token: r.token, sid: r.sid, name: r.name, usage: r.usage || [], anytime: !!r.anytime };
+    S.session = { token: r.token, sid: r.sid, name: r.name, usage: r.usage || [], usageAt: Date.now(), day: dateKey(), anytime: !!r.anytime };
     if (!isT) lsSet('hp-sess-' + S.code, JSON.stringify(S.session));
     showStudent();
   }, note);
@@ -390,7 +392,7 @@ function showStudent() {
       html = `<p class="up-banner">${name}, you're up!</p><p class="muted">Tap the button as you leave the room.</p>
         <div class="row center"><button class="btn primary xl" data-a="go">I'm leaving now</button></div>
         <button class="btn ghost sm" data-a="leave">Leave the line</button>`;
-    } else if (pos < 0 && usedUp(S.session.usage) && st.state !== 'closed') {
+    } else if (pos < 0 && usedUp(S.session.usage) && Date.now() - (S.session.usageAt || 0) < 120000 && st.state !== 'closed') {
       html = `<p class="big">No passes left</p><p class="muted">${esc(usedUpMsg(usedUp(S.session.usage)))}</p>`;
     } else if (pos >= 0) {
       html = `<p class="big">You're #${pos + 1} in line</p>
@@ -407,7 +409,7 @@ function showStudent() {
     }
     const usage = S.session.usage || [];
     if (usage.length && !isOut) {
-      html += `<p class="passes-left">Passes left: ${usage.map(u => `<b class="${u.left ? '' : 'danger-text'}">${u.left}</b> ${esc(u.label)}`).join(' · ')}</p>`;
+      html += `<p class="passes-left">${Date.now() - (S.session.usageAt || 0) > 120000 ? 'Last checked: ' : ''}Passes left: ${usage.map(u => `<b class="${u.left ? '' : 'danger-text'}">${u.left}</b> ${esc(u.label)}`).join(' · ')}</p>`;
     }
     const meEl = $('#me');
     meEl.innerHTML = html;
@@ -454,6 +456,7 @@ function showStudent() {
     if (S.session && 'anytime' in r) S.session.anytime = !!r.anytime;
     if (r.usage && S.session) {
       S.session.usage = r.usage;
+      S.session.usageAt = Date.now();
       if (!local) lsSet('hp-sess-' + S.code, JSON.stringify(S.session));
     }
     toast(r.msg, !r.ok);
