@@ -1,5 +1,7 @@
 rules_version = '2';
-// Hall Pass security rules. Paste this into Firebase console → Firestore Database → Rules, then Publish.
+// Security rules for BOTH Hall Pass and Classroom Games (they share one Firebase project).
+// Paste ALL of this into Firebase console → Firestore Database → Rules, replacing everything, then Publish.
+// Keep this file the same in the hall-pass and classroom-games repos.
 service cloud.firestore {
   match /databases/{database}/documents {
 
@@ -49,6 +51,38 @@ service cloud.firestore {
       match /replies/{id} {
         allow get, delete: if true;
         allow list, create, update: if isOwner();
+      }
+    }
+
+    // ---------- Classroom Games buzz-in (mr-mccormack.github.io/classroom-games) ----------
+    // Separate from Hall Pass: nothing here can read or change the sections above.
+    // A buzz room holds the game name, team names, and the line. Anyone with the exact code can
+    // view that one room. Nobody can list or search rooms, and only your teacher key can change one.
+    match /buzz/{code} {
+      function isBuzzOwner() {
+        return request.auth != null
+          && get(/databases/$(database)/documents/buzz/$(code)).data.ownerUid == request.auth.uid;
+      }
+
+      allow get: if true;
+      allow list: if false;
+      allow create: if request.auth != null && request.resource.data.ownerUid == request.auth.uid;
+      allow update: if request.auth != null && resource.data.ownerUid == request.auth.uid
+        && request.resource.data.ownerUid == request.auth.uid;
+      allow delete: if request.auth != null && resource.data.ownerUid == request.auth.uid;
+
+      // A student's computer can only drop a "join" or "leave" press here, stamped with the server's
+      // clock. Your game screen reads the presses, builds the line, and deletes them.
+      match /presses/{id} {
+        allow create: if exists(/databases/$(database)/documents/buzz/$(code))
+          && request.resource.data.keys().hasOnly(['team', 'action', 'at', 'device'])
+          && request.resource.data.team is int
+          && request.resource.data.team >= 0 && request.resource.data.team < 12
+          && request.resource.data.action in ['join', 'leave']
+          && request.resource.data.at == request.time
+          && request.resource.data.device is string && request.resource.data.device.size() <= 40;
+        allow read, delete: if isBuzzOwner();
+        allow update: if false;
       }
     }
   }
